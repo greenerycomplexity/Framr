@@ -27,7 +27,7 @@ struct VideoPlayerSection: View {
                 Text(playerManager.formattedTime(playerManager.currentTime))
                     .font(
                         .system(
-                            size: 14,
+                            size: 11,
                             weight: .semibold,
                             design: .monospaced
                         )
@@ -35,8 +35,8 @@ struct VideoPlayerSection: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
-                    .glassEffect(.regular.tint(.black.opacity(0.3)))
-                    .padding(.bottom, 20)
+                    .glassEffect(.clear.tint(.black.opacity(0.3)))
+                    .padding(.bottom, 10)
             }
         }
         .frame(maxHeight: 600)
