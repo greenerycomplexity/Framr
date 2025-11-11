@@ -6,16 +6,17 @@
 //
 
 import AVKit
+import Photos
 import PhotosUI
 import SwiftUI
-import Photos
 
 struct FrameGrabView: View {
     let videoURL: URL
     @Binding var selectedVideo: PhotosPickerItem?
     @State private var playerManager: VideoPlayerManager
-    @State private var showingSaveAlert = false
-    @State private var saveAlertMessage = ""
+    @State private var showingBanner = false
+    @State private var bannerMessage = ""
+    @State private var bannerIsSuccess = true
     @State private var isSaving = false
 
     init(videoURL: URL, selectedVideo: Binding<PhotosPickerItem?>) {
@@ -37,26 +38,38 @@ struct FrameGrabView: View {
                 Spacer()
 
                 // Video Player Area
-                videoPlayerSection
+                VideoPlayerSection(playerManager: playerManager)
 
                 Spacer()
 
                 // Thumbnail Scrubber
-                thumbnailScrubber
+                ThumbnailScrubber(playerManager: playerManager)
                     .padding(.horizontal)
                     .padding(.bottom, 20)
 
                 // Bottom Controls
-                bottomControls
-                    .padding(.bottom, 40)
+                FrameControlButtons(
+                    playerManager: playerManager,
+                    isSaving: isSaving,
+                    onSaveFrame: {
+                        Task {
+                            await saveCurrentFrame()
+                        }
+                    }
+                )
+                .padding(.bottom, 40)
+            }
+
+            // Floating Banner
+            if showingBanner {
+                StatusBanner(
+                    message: bannerMessage,
+                    isSuccess: bannerIsSuccess,
+                    isVisible: $showingBanner
+                )
             }
         }
         .preferredColorScheme(.dark)
-        .alert("Save Frame", isPresented: $showingSaveAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(saveAlertMessage)
-        }
     }
 
     // MARK: - Top Navigation Bar
@@ -99,223 +112,80 @@ struct FrameGrabView: View {
         .padding(.top, 10)
     }
 
-    // MARK: - Video Player Section
-    private var videoPlayerSection: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                // Video Player
-                VideoPlayer(player: playerManager.player)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(
-                        width: geometry.size.width,
-                        height: geometry.size.height
-                    )
-                    .disabled(true)  // Disable default controls
 
-                // Timecode Overlay
-                Text(playerManager.formattedTime(playerManager.currentTime))
-                    .font(
-                        .system(
-                            size: 14,
-                            weight: .semibold,
-                            design: .monospaced
-                        )
-                    )
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .glassEffect(.regular.tint(.black.opacity(0.3)))
-                    .padding(.bottom, 20)
-            }
-        }
-        .frame(maxHeight: 600)
-    }
-
-    // MARK: - Thumbnail Scrubber
-    private var thumbnailScrubber: some View {
-        VStack(spacing: 8) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    // Thumbnail strip - all thumbnails visible at once
-                    HStack(spacing: 1) {
-                        ForEach(0..<playerManager.thumbnails.count, id: \.self)
-                        { index in
-                            Image(uiImage: playerManager.thumbnails[index])
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(
-                                    width: geometry.size.width
-                                        / CGFloat(
-                                            max(
-                                                playerManager.thumbnails.count,
-                                                1
-                                            )
-                                        ),
-                                    height: 40
-                                )
-                                .clipped()
-                        }
-                    }
-                    .opacity(0.6)
-                    .cornerRadius(8)
-
-                    // Seek indicator - draggable
-                    Rectangle()
-                        .fill(Color.white)
-                        .frame(width: 4)
-                        .glassEffect(.regular.tint(.white))
-                        .offset(
-                            x: geometry.size.width
-                                * playerManager.getCurrentProgress() - 2
-                        )
-                        .shadow(color: .white.opacity(0.5), radius: 4)
-                }
-                .frame(height: 40)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let percentage = max(
-                                0,
-                                min(1, value.location.x / geometry.size.width)
-                            )
-                            playerManager.seekToPercentage(percentage)
-                        }
-                )
-            }
-            .frame(height: 40)
-            .cornerRadius(8)
-            .glassEffect(.regular.tint(.white.opacity(0.05)))
-        }
-    }
-
-    // MARK: - Bottom Controls
-    private var bottomControls: some View {
-        VStack {
-            HStack(spacing: 40) {
-                //             Previous Frame Button
-                Button(action: {
-                    playerManager.previousFrame()
-                }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 70, height: 70)
-                        .glassEffect(
-                            .regular.interactive().tint(.white.opacity(0.1))
-                        )
-                }
-
-                //            Save frame button
-                Button(action: {
-                    Task {
-                        await saveCurrentFrame()
-                    }
-                }) {
-
-                    ZStack {
-                        if isSaving {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .scaleEffect(1.5)
-                        } else {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 32, weight: .semibold))
-                                .offset(y: -5)
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .frame(width: 100, height: 100)
-                    .glassEffect(
-                        .regular.interactive().tint(.blue.opacity(0.3))
-                    )
-                }
-                .disabled(isSaving)
-
-                // Next Frame Button
-                Button(action: {
-                    playerManager.nextFrame()
-                }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 70, height: 70)
-                        .glassEffect(
-                            .regular.interactive().tint(.white.opacity(0.1))
-                        )
-                }
-            }
-            // Play/Pause Button
-            Button(action: {
-                playerManager.togglePlayPause()
-            }) {
-                Image(
-                    systemName: playerManager.isPlaying
-                        ? "pause.fill" : "play.fill"
-                )
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 70, height: 70)
-                .glassEffect(.regular.interactive().tint(.white.opacity(0.3)))
-            }
-
-        }
-
-    }
-    
     // MARK: - Save Frame Methods
-    
+
     private func saveCurrentFrame() async {
         isSaving = true
         defer { isSaving = false }
-        
+
         // Check photo library permission
-        let authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        
+        let authorizationStatus = PHPhotoLibrary.authorizationStatus(
+            for: .addOnly
+        )
+
         switch authorizationStatus {
         case .authorized, .limited:
             await captureAndSaveFrame()
         case .notDetermined:
             // Request permission
-            let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            let status = await PHPhotoLibrary.requestAuthorization(
+                for: .addOnly
+            )
             if status == .authorized || status == .limited {
                 await captureAndSaveFrame()
             } else {
-                await showSaveError(message: "Photo library access denied. Please enable it in Settings to save frames.")
+                await showBanner(
+                    message: "Photo access denied",
+                    isSuccess: false
+                )
             }
         case .denied, .restricted:
-            await showSaveError(message: "Photo library access denied. Please enable it in Settings to save frames.")
+            await showBanner(message: "Photo access denied", isSuccess: false)
         @unknown default:
-            await showSaveError(message: "Unable to access photo library.")
+            await showBanner(
+                message: "Unable to access photos",
+                isSuccess: false
+            )
         }
     }
-    
+
     private func captureAndSaveFrame() async {
         // Capture the current frame
         guard let frameImage = await playerManager.captureCurrentFrame() else {
-            await showSaveError(message: "Failed to capture the current frame.")
+            await showBanner(
+                message: "Failed to capture frame",
+                isSuccess: false
+            )
             return
         }
-        
+
         // Save to photo library
         do {
             try await PHPhotoLibrary.shared().performChanges {
                 PHAssetCreationRequest.creationRequestForAsset(from: frameImage)
             }
-            
-            await MainActor.run {
-                saveAlertMessage = "Frame saved successfully to Photos!"
-                showingSaveAlert = true
-            }
+
+            await showBanner(message: "Frame saved to Photos!", isSuccess: true)
         } catch {
-            await showSaveError(message: "Failed to save frame: \(error.localizedDescription)")
+            await showBanner(message: "Failed to save frame", isSuccess: false)
         }
     }
-    
-    private func showSaveError(message: String) async {
+
+    private func showBanner(message: String, isSuccess: Bool) async {
         await MainActor.run {
-            saveAlertMessage = message
-            showingSaveAlert = true
+            bannerMessage = message
+            bannerIsSuccess = isSuccess
+            withAnimation {
+                showingBanner = true
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)  // 2 seconds
+                withAnimation {
+                    showingBanner = false
+                }
+            }
         }
     }
 }
