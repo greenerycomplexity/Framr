@@ -11,7 +11,8 @@ import SwiftUI
 struct FramrApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            EntryView()
+                .preferredColorScheme(.dark)
         }
     }
 }
