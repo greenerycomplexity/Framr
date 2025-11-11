@@ -189,9 +189,15 @@ class VideoPlayerManager {
     }
     
     deinit {
+        // Pause the player before cleanup
+        player.pause()
+        
+        // Remove time observer
         if let timeObserver = timeObserver {
             player.removeTimeObserver(timeObserver)
         }
+        
+        // Remove notification observers
         NotificationCenter.default.removeObserver(self)
     }
 }

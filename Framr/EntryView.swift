@@ -18,6 +18,7 @@ struct EntryView: View {
         ZStack {
             if let videoURL = videoURL {
                 FrameGrabView(videoURL: videoURL, selectedVideo: $selectedVideo)
+                    .id(videoURL)
             }
             else if isLoadingVideo {
                 VStack(spacing: 20) {
@@ -45,6 +46,8 @@ struct EntryView: View {
             return
         }
         
+        // Clear the current video to show loading state
+        videoURL = nil
         isLoadingVideo = true
         
         do {
