@@ -188,6 +188,23 @@ class VideoPlayerManager {
         return currentTime.seconds / duration.seconds
     }
     
+    func captureCurrentFrame() async -> UIImage? {
+        guard let asset = asset else { return nil }
+        
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
+        
+        do {
+            let cgImage = try await imageGenerator.image(at: currentTime).image
+            return UIImage(cgImage: cgImage)
+        } catch {
+            print("Error capturing frame: \(error)")
+            return nil
+        }
+    }
+    
     deinit {
         // Pause the player before cleanup
         player.pause()
