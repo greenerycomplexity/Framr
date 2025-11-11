@@ -71,10 +71,24 @@ class VideoPlayerManager {
             let duration = try await asset.load(.duration)
             let durationSeconds = CMTimeGetSeconds(duration)
             
-            // Generate 20 thumbnails evenly distributed
-            let thumbnailCount = 20
-            var times: [NSValue] = []
+            // Adaptive thumbnail count based on video duration
+            let thumbnailCount: Int
+            switch durationSeconds {
+            case 0..<30:        // < 30s
+                thumbnailCount = 10
+            case 30..<120:      // 30s - 2min
+                thumbnailCount = 20
+            case 120..<600:     // 2min - 10min
+                thumbnailCount = 40
+            case 600..<1800:    // 10min - 30min
+                thumbnailCount = 60
+            case 1800..<3600:   // 30min - 1hr
+                thumbnailCount = 80
+            default:            // 1hr+
+                thumbnailCount = 100
+            }
             
+            var times: [NSValue] = []
             for i in 0..<thumbnailCount {
                 let time = CMTime(seconds: (durationSeconds / Double(thumbnailCount)) * Double(i), preferredTimescale: 600)
                 times.append(NSValue(time: time))

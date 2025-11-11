@@ -189,11 +189,15 @@ struct FrameGrabView: View {
 }
 
 #Preview {
-    // For preview, we need a sample video URL
-    // This won't work without an actual video file
-    if let url = Bundle.main.url(forResource: "sample", withExtension: "mp4") {
+    #if DEBUG
+    if let url = PreviewHelpers.sampleVideoURL {
         FrameGrabView(videoURL: url, selectedVideo: .constant(nil))
     } else {
-        Text("No preview available - video file needed")
+        ContentUnavailableView(
+            "No Preview Video",
+            systemImage: "video.slash",
+            description: Text("Add 'SampleVideo.mp4' to the project bundle to preview")
+        )
     }
+    #endif
 }
