@@ -63,7 +63,7 @@ struct ThumbnailScrubber: View {
             }
             .frame(height: 40)
             .cornerRadius(8)
-            .glassEffect(.regular.tint(.white.opacity(0.05)))
+//            .glassEffect(.regular.tint(.white.opacity(0.05)))
         }
     }
 }

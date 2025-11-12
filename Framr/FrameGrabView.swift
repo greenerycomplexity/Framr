@@ -18,6 +18,7 @@ struct FrameGrabView: View {
     @State private var bannerMessage = ""
     @State private var bannerIsSuccess = true
     @State private var isSaving = false
+    @State private var isZooming = false
 
     init(videoURL: URL, selectedVideo: Binding<PhotosPickerItem?>) {
         self.videoURL = videoURL
@@ -34,11 +35,13 @@ struct FrameGrabView: View {
             VStack(spacing: 0) {
                 // Top Navigation Bar
                 topNavigationBar
+                    .opacity(isZooming ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
 
                 Spacer()
 
                 // Video Player Area
-                VideoPlayerSection(playerManager: playerManager)
+                VideoPlayerSection(playerManager: playerManager, isZooming: $isZooming)
 
                 Spacer()
 
@@ -46,6 +49,8 @@ struct FrameGrabView: View {
                 ThumbnailScrubber(playerManager: playerManager)
                     .padding(.horizontal)
                     .padding(.bottom, 20)
+                    .opacity(isZooming ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
 
                 // Bottom Controls
                 FrameControlButtons(
@@ -58,6 +63,8 @@ struct FrameGrabView: View {
                     }
                 )
                 .padding(.bottom, 40)
+                .opacity(isZooming ? 0 : 1)
+                .animation(.easeInOut(duration: 0.3), value: isZooming)
             }
 
             // Floating Banner
@@ -67,6 +74,8 @@ struct FrameGrabView: View {
                     isSuccess: bannerIsSuccess,
                     isVisible: $showingBanner
                 )
+                .opacity(isZooming ? 0 : 1)
+                .animation(.easeInOut(duration: 0.3), value: isZooming)
             }
         }
         .preferredColorScheme(.dark)
