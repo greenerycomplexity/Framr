@@ -48,6 +48,13 @@ struct FrameGrabView: View {
                 // Thumbnail Scrubber
                 ThumbnailScrubber(playerManager: playerManager)
                     .padding(.horizontal)
+                    .padding(.bottom, 12)
+                    .opacity(isZooming ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
+                
+                // Frame Picker Carousel
+                FramePickerCarousel(playerManager: playerManager)
+                    .padding(.horizontal)
                     .padding(.bottom, 20)
                     .opacity(isZooming ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)

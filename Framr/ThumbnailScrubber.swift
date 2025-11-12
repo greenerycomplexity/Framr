@@ -35,7 +35,7 @@ struct ThumbnailScrubber: View {
                         }
                     }
                     .opacity(0.6)
-                    .cornerRadius(8)
+                    .cornerRadius(10)
 
                     // Seek indicator - draggable
                     Rectangle()
@@ -62,7 +62,8 @@ struct ThumbnailScrubber: View {
                 )
             }
             .frame(height: 40)
-            .cornerRadius(8)
+            .cornerRadius(10)
+            .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 10))
 //            .glassEffect(.regular.tint(.white.opacity(0.05)))
         }
     }

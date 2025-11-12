@@ -17,6 +17,11 @@ class VideoPlayerManager {
     var isPlaying: Bool = false
     var thumbnails: [UIImage] = []
     
+    // Frame-by-frame navigation properties
+    var totalFrameCount: Int = 0
+    var currentFrameIndex: Int = 0
+    private var frameThumbnailCache: [Int: UIImage] = [:]
+    
     private var timeObserver: Any?
     private var asset: AVAsset?
     
@@ -37,6 +42,7 @@ class VideoPlayerManager {
         let interval = CMTime(seconds: 0.01, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             self?.currentTime = time
+            self?.updateCurrentFrameIndex()
         }
         
         // Observe player status
@@ -55,9 +61,25 @@ class VideoPlayerManager {
         do {
             let duration = try await asset.load(.duration)
             self.duration = duration
+            await calculateTotalFrameCount()
         } catch {
             print("Error loading duration: \(error)")
         }
+    }
+    
+    private func calculateTotalFrameCount() async {
+        guard let frameRate = getFrameRate() else { return }
+        let durationSeconds = CMTimeGetSeconds(duration)
+        await MainActor.run {
+            self.totalFrameCount = Int(durationSeconds * frameRate)
+        }
+    }
+    
+    private func updateCurrentFrameIndex() {
+        guard let frameRate = getFrameRate(), totalFrameCount > 0 else { return }
+        let currentSeconds = CMTimeGetSeconds(currentTime)
+        let frameIndex = Int(currentSeconds * frameRate)
+        self.currentFrameIndex = min(max(0, frameIndex), totalFrameCount - 1)
     }
     
     func generateThumbnails() async {
@@ -65,7 +87,13 @@ class VideoPlayerManager {
         
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.maximumSize = CGSize(width: 200, height: 112) // 16:9 aspect ratio thumbnail
+        
+        // Generate at higher resolution for Retina displays
+        let scale = UIScreen.main.scale
+        imageGenerator.maximumSize = CGSize(
+            width: 200 * scale,
+            height: 112 * scale
+        ) // 16:9 aspect ratio thumbnail
         
         do {
             let duration = try await asset.load(.duration)
@@ -201,6 +229,65 @@ class VideoPlayerManager {
             return UIImage(cgImage: cgImage)
         } catch {
             print("Error capturing frame: \(error)")
+            return nil
+        }
+    }
+    
+    // MARK: - Frame-by-frame Navigation
+    
+    func seekToFrame(_ frameIndex: Int) {
+        guard let frameRate = getFrameRate(), frameIndex >= 0, frameIndex < totalFrameCount else { return }
+        let timeInSeconds = Double(frameIndex) / frameRate
+        let time = CMTime(seconds: timeInSeconds, preferredTimescale: 600)
+        seek(to: time)
+    }
+    
+    func getFrameThumbnail(at frameIndex: Int) async -> UIImage? {
+        // Check cache first
+        if let cachedImage = frameThumbnailCache[frameIndex] {
+            return cachedImage
+        }
+        
+        // Generate thumbnail for this specific frame
+        guard let asset = asset, let frameRate = getFrameRate() else { return nil }
+        
+        let timeInSeconds = Double(frameIndex) / frameRate
+        let time = CMTime(seconds: timeInSeconds, preferredTimescale: 600)
+        
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.requestedTimeToleranceBefore = .zero
+        imageGenerator.requestedTimeToleranceAfter = .zero
+        
+        // Generate at higher resolution for Retina displays
+        // Using 3x scale to ensure sharp thumbnails on all devices
+        let scale = UIScreen.main.scale
+        imageGenerator.maximumSize = CGSize(
+            width: 120 * scale,
+            height: 80 * scale
+        )
+        
+        do {
+            let cgImage = try await imageGenerator.image(at: time).image
+            let uiImage = UIImage(cgImage: cgImage)
+            
+            // Cache the thumbnail
+            await MainActor.run {
+                frameThumbnailCache[frameIndex] = uiImage
+                
+                // Limit cache size to prevent memory issues
+                if frameThumbnailCache.count > 100 {
+                    // Remove random entries to keep cache size manageable
+                    let keysToRemove = Array(frameThumbnailCache.keys.prefix(20))
+                    for key in keysToRemove {
+                        frameThumbnailCache.removeValue(forKey: key)
+                    }
+                }
+            }
+            
+            return uiImage
+        } catch {
+            print("Error generating frame thumbnail: \(error)")
             return nil
         }
     }

@@ -15,19 +15,33 @@ struct FrameControlButtons: View {
     var body: some View {
         VStack {
             HStack(spacing: 40) {
-                // Previous Frame Button
-                Button(action: {
-                    playerManager.previousFrame()
-                }) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 70, height: 70)
-                        .glassEffect(
-                            .regular.interactive().tint(.white.opacity(0.1))
-                        )
-                }
+//                // Previous Frame Button
+//                Button(action: {
+//                    playerManager.previousFrame()
+//                }) {
+//                    Image(systemName: "chevron.left")
+//                        .font(.system(size: 28, weight: .semibold))
+//                        .foregroundStyle(.white)
+//                        .frame(width: 70, height: 70)
+//                        .glassEffect(
+//                            .regular.interactive().tint(.white.opacity(0.1))
+//                        )
+//                }
 
+                // Play/Pause Button
+                Button(action: {
+                    playerManager.togglePlayPause()
+                }) {
+                    Image(
+                        systemName: playerManager.isPlaying
+                            ? "pause.fill" : "play.fill"
+                    )
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 70, height: 70)
+                    .glassEffect(.regular.interactive().tint(.white.opacity(0.3)))
+                }
+                
                 // Save frame button
                 Button(action: {
                     onSaveFrame()
@@ -53,32 +67,21 @@ struct FrameControlButtons: View {
                 }
                 .disabled(isSaving)
 
-                // Next Frame Button
-                Button(action: {
-                    playerManager.nextFrame()
-                }) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 70, height: 70)
-                        .glassEffect(
-                            .regular.interactive().tint(.white.opacity(0.1))
-                        )
-                }
+//                // Next Frame Button
+//                Button(action: {
+//                    playerManager.nextFrame()
+//                }) {
+//                    Image(systemName: "chevron.right")
+//                        .font(.system(size: 28, weight: .semibold))
+//                        .foregroundStyle(.white)
+//                        .frame(width: 70, height: 70)
+//                        .glassEffect(
+//                            .regular.interactive().tint(.white.opacity(0.1))
+//                        )
+//                }
+              
             }
-            // Play/Pause Button
-            Button(action: {
-                playerManager.togglePlayPause()
-            }) {
-                Image(
-                    systemName: playerManager.isPlaying
-                        ? "pause.fill" : "play.fill"
-                )
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 70, height: 70)
-                .glassEffect(.regular.interactive().tint(.white.opacity(0.3)))
-            }
+          
         }
     }
 }
