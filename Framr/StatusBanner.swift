@@ -28,7 +28,7 @@ struct StatusBanner: View {
             .padding(.vertical, 12)
             .glassEffect(.regular)
             .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-            .padding(.bottom, 315)
+            .padding(.bottom, 335)
         }
     }
 }

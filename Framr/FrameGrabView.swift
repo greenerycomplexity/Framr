@@ -82,8 +82,6 @@ struct FrameGrabView: View {
                         value: playerManager.isPlaying
                     )
 
-                    Spacer()
-
                     // Bottom Controls
                     FrameControlButtons(
                         playerManager: playerManager,
