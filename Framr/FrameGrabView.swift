@@ -10,13 +10,20 @@ import Photos
 import PhotosUI
 import SwiftUI
 
+enum BannerState {
+    case hidden
+    case success
+    case denied
+    case error
+}
+
 struct FrameGrabView: View {
     let videoURL: URL
     @Binding var selectedVideo: PhotosPickerItem?
     @State private var playerManager: VideoPlayerManager
-    @State private var showingBanner = false
-    @State private var bannerMessage = ""
-    @State private var bannerIsSuccess = true
+    @State private var bannerState: BannerState = .hidden
+    @State private var displayedMessage: String = ""
+    @State private var displayedIsSuccess: Bool = false
     @State private var isSaving = false
     @State private var isZooming = false
     @State private var isScrubbing = false
@@ -31,109 +38,100 @@ struct FrameGrabView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // Top Navigation Bar
-                topNavigationBar
-                    .opacity(isZooming ? 0 : 1)
-                    .animation(.easeInOut(duration: 0.3), value: isZooming)
+                VStack(spacing: 0) {
+                    Spacer()
 
-                Spacer()
+                    // Video Player Area
+                    VideoPlayerSection(
+                        playerManager: playerManager,
+                        isZooming: $isZooming
+                    )
 
-                // Video Player Area
-                VideoPlayerSection(playerManager: playerManager, isZooming: $isZooming)
+                    Spacer()
 
-                Spacer()
-
-                // Thumbnail Scrubber
-                ThumbnailScrubber(playerManager: playerManager, isScrubbing: $isScrubbing)
+                    // Thumbnail Scrubber
+                    ThumbnailScrubber(
+                        playerManager: playerManager,
+                        isScrubbing: $isScrubbing
+                    )
                     .padding(.horizontal)
                     .padding(.bottom, 12)
                     .opacity(isZooming ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
-                
-//                // Frame Picker Carousel
-                FramePickerCarousel(playerManager: playerManager, isCarouselScrolling: $isCarouselScrolling, isScrubbing: $isScrubbing)
+
+                    //                // Frame Picker Carousel
+                    FramePickerCarousel(
+                        playerManager: playerManager,
+                        isCarouselScrolling: $isCarouselScrolling,
+                        isScrubbing: $isScrubbing
+                    )
                     .padding(.horizontal)
                     .padding(.bottom, 20)
-                    .opacity(isZooming || isScrubbing || playerManager.isPlaying ? 0 : 1)
+                    .opacity(
+                        isZooming || isScrubbing || playerManager.isPlaying
+                            ? 0 : 1
+                    )
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
                     .animation(.easeInOut(duration: 0.3), value: isScrubbing)
-                    .animation(.easeInOut(duration: 0.3), value: playerManager.isPlaying)
-                
-                Spacer()
+                    .animation(
+                        .easeInOut(duration: 0.3),
+                        value: playerManager.isPlaying
+                    )
 
-                // Bottom Controls
-                FrameControlButtons(
-                    playerManager: playerManager,
-                    onSaveFrame: {
-                        Task {
-                            await saveCurrentFrame()
+                    Spacer()
+
+                    // Bottom Controls
+                    FrameControlButtons(
+                        playerManager: playerManager,
+                        onSaveFrame: {
+                            Task {
+                                await saveCurrentFrame()
+                            }
                         }
-                    }
-                )
-                .padding(.bottom, 40)
-                .opacity(isZooming || isScrubbing ? 0 : 1)
-                .animation(.easeInOut(duration: 0.3), value: isZooming)
-                .animation(.easeInOut(duration: 0.3), value: isScrubbing)
-            }
+                    )
+                    .padding(.bottom, 40)
+                    .opacity(isZooming || isScrubbing ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
+                    .animation(.easeInOut(duration: 0.3), value: isScrubbing)
+                }
 
-            // Floating Banner
-            if showingBanner {
+                // Floating Banner
                 StatusBanner(
-                    message: bannerMessage,
-                    isSuccess: bannerIsSuccess,
-                    isVisible: $showingBanner
+                    message: displayedMessage,
+                    isSuccess: displayedIsSuccess
                 )
                 .opacity(isZooming ? 0 : 1)
+                .opacity(bannerState != .hidden ? 1 : 0)
                 .animation(.easeInOut(duration: 0.3), value: isZooming)
+                
             }
+            .navigationTitle("Framr")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Settings", systemImage: "gearshape") {
+                        // Settings action
+                    }
+                    .opacity(isZooming ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    PhotosPicker(selection: $selectedVideo, matching: .videos) {
+                        Label("Photo Library", systemImage: "photo.badge.plus")
+                    }
+                    .opacity(isZooming ? 0 : 1)
+                    .animation(.easeInOut(duration: 0.3), value: isZooming)
+                }
+            }
+            .toolbarBackground(.visible, for: .navigationBar)
+            .preferredColorScheme(.dark)
         }
-        .preferredColorScheme(.dark)
     }
-
-    // MARK: - Top Navigation Bar
-    private var topNavigationBar: some View {
-        HStack {
-            // Settings Button
-            Button(action: {
-                // Settings action
-            }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 24))
-                    .foregroundStyle(.white)
-                    .frame(width: 50, height: 50)
-                    .glassEffect(
-                        .regular.interactive().tint(.white.opacity(0.1))
-                    )
-            }
-
-            Spacer()
-
-            // Title
-            Text("Frame Grabber")
-                .font(.headline)
-                .foregroundStyle(.white)
-
-            Spacer()
-
-            // Photo Library Button
-            PhotosPicker(selection: $selectedVideo, matching: .videos) {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 24))
-                    .foregroundStyle(.white)
-                    .frame(width: 50, height: 50)
-                    .glassEffect(
-                        .regular.interactive().tint(.white.opacity(0.1))
-                    )
-            }
-        }
-        .padding(.horizontal)
-        .padding(.top, 10)
-    }
-
 
     // MARK: - Save Frame Methods
 
@@ -157,28 +155,19 @@ struct FrameGrabView: View {
             if status == .authorized || status == .limited {
                 await captureAndSaveFrame()
             } else {
-                await showBanner(
-                    message: "Photo access denied",
-                    isSuccess: false
-                )
+                showBanner(state: .denied)
             }
         case .denied, .restricted:
-            await showBanner(message: "Photo access denied", isSuccess: false)
+            showBanner(state: .denied)
         @unknown default:
-            await showBanner(
-                message: "Unable to access photos",
-                isSuccess: false
-            )
+            showBanner(state: .denied)
         }
     }
 
     private func captureAndSaveFrame() async {
         // Capture the current frame
         guard let frameImage = await playerManager.captureCurrentFrame() else {
-            await showBanner(
-                message: "Failed to capture frame",
-                isSuccess: false
-            )
+            showBanner(state: .error)
             return
         }
 
@@ -188,26 +177,41 @@ struct FrameGrabView: View {
                 PHAssetCreationRequest.creationRequestForAsset(from: frameImage)
             }
 
-            await showBanner(message: "Frame saved to Photos!", isSuccess: true)
+            showBanner(state: .success)
         } catch {
-            await showBanner(message: "Failed to save frame", isSuccess: false)
+            showBanner(state: .error)
         }
     }
 
-    private func showBanner(message: String, isSuccess: Bool) async {
-        await MainActor.run {
-            bannerMessage = message
-            bannerIsSuccess = isSuccess
-            withAnimation {
-                showingBanner = true
-            }
+    private func showBanner(state: BannerState) {
+        // Update cached content BEFORE showing the banner
+        displayedMessage = bannerMessage(for: state)
+        displayedIsSuccess = state == .success
+        
+        withAnimation {
+            bannerState = state
+        }
 
-            Task {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)  // 2 seconds
-                withAnimation {
-                    showingBanner = false
-                }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2 seconds
+            withAnimation {
+                bannerState = .hidden
+                // Don't change displayedMessage or displayedIsSuccess here
+                // They stay cached for the fade-out animation
             }
+        }
+    }
+
+    private func bannerMessage(for state: BannerState) -> String {
+        switch state {
+        case .success:
+            return "Photo successfully saved"
+        case .denied:
+            return "Photos Library access denied"
+        case .error:
+            return "Photo couldn't be saved"
+        case .hidden:
+            return ""
         }
     }
 }

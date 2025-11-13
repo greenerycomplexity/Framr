@@ -10,7 +10,6 @@ import SwiftUI
 struct StatusBanner: View {
     let message: String
     let isSuccess: Bool
-    @Binding var isVisible: Bool
     
     var body: some View {
         VStack {
@@ -18,19 +17,18 @@ struct StatusBanner: View {
 
             HStack(spacing: 12) {
                 Text(isSuccess ? "✅" : "❌")
-                    .font(.system(size: 24))
+                    .font(.headline)
 
                 Text(message)
-                    .font(.system(size: 16, weight: .semibold))
+//                    .font(.system(size: 14, weight: .semibold))
+                    .font(.headline)
                     .foregroundStyle(.white)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
             .glassEffect(.regular)
             .shadow(color: .black.opacity(0.3), radius: 20, y: 10)
-            .padding(.bottom, 120)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.easeInOut(duration: 0.3), value: isVisible)
+            .padding(.bottom, 315)
         }
     }
 }
@@ -42,7 +40,6 @@ struct StatusBanner: View {
         StatusBanner(
             message: "Frame saved to Photos!",
             isSuccess: true,
-            isVisible: .constant(true)
         )
     }
 }
@@ -54,7 +51,6 @@ struct StatusBanner: View {
         StatusBanner(
             message: "Failed to save frame",
             isSuccess: false,
-            isVisible: .constant(true)
         )
     }
 }
