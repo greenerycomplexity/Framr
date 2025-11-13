@@ -19,6 +19,8 @@ struct FrameGrabView: View {
     @State private var bannerIsSuccess = true
     @State private var isSaving = false
     @State private var isZooming = false
+    @State private var isScrubbing = false
+    @State private var isCarouselScrolling = false
 
     init(videoURL: URL, selectedVideo: Binding<PhotosPickerItem?>) {
         self.videoURL = videoURL
@@ -46,18 +48,19 @@ struct FrameGrabView: View {
                 Spacer()
 
                 // Thumbnail Scrubber
-                ThumbnailScrubber(playerManager: playerManager)
+                ThumbnailScrubber(playerManager: playerManager, isScrubbing: $isScrubbing)
                     .padding(.horizontal)
                     .padding(.bottom, 12)
                     .opacity(isZooming ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
                 
-                // Frame Picker Carousel
-                FramePickerCarousel(playerManager: playerManager)
+//                // Frame Picker Carousel
+                FramePickerCarousel(playerManager: playerManager, isCarouselScrolling: $isCarouselScrolling, isScrubbing: $isScrubbing)
                     .padding(.horizontal)
                     .padding(.bottom, 20)
-                    .opacity(isZooming ? 0 : 1)
+                    .opacity(isZooming || isScrubbing ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
+                    .animation(.easeInOut(duration: 0.3), value: isScrubbing)
 
                 // Bottom Controls
                 FrameControlButtons(
@@ -70,8 +73,9 @@ struct FrameGrabView: View {
                     }
                 )
                 .padding(.bottom, 40)
-                .opacity(isZooming ? 0 : 1)
+                .opacity(isZooming || isScrubbing ? 0 : 1)
                 .animation(.easeInOut(duration: 0.3), value: isZooming)
+                .animation(.easeInOut(duration: 0.3), value: isScrubbing)
             }
 
             // Floating Banner

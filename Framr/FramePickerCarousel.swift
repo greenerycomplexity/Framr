@@ -10,10 +10,15 @@ import AVFoundation
 
 struct FramePickerCarousel: View {
     @Bindable var playerManager: VideoPlayerManager
+    @Binding var isCarouselScrolling: Bool
+    @Binding var isScrubbing: Bool
     
     @State private var scrollPosition: Int?
     @State private var isUserScrolling = false
     @State private var lastSeekFrame: Int?
+    @State private var seekDebounceTask: Task<Void, Never>?
+    @State private var scrollPhase: ScrollPhase = .idle
+    @State private var lastUserInteractionTime: Date?
     
     private let frameHeight: CGFloat = 60
     private let frameWidth:CGFloat = 40
@@ -46,15 +51,37 @@ struct FramePickerCarousel: View {
             .scrollTargetBehavior(.viewAligned)
             .scrollIndicators(.hidden)
             .onScrollPhaseChange { oldPhase, newPhase in
-                isUserScrolling = newPhase == .interacting || newPhase == .decelerating
+                scrollPhase = newPhase
+                isUserScrolling = newPhase == .interacting || newPhase == .decelerating || newPhase == .animating
+                isCarouselScrolling = isUserScrolling
+                
+                // Track when user last interacted
+                if newPhase == .interacting {
+                    lastUserInteractionTime = Date()
+                }
             }
             .onChange(of: scrollPosition) { oldValue, newValue in
-                // Seek in real-time as user scrolls
+                // Debounced seeking as user scrolls
                 if let frameIndex = newValue, isUserScrolling {
                     // Only seek if we've moved to a different frame
                     if lastSeekFrame != frameIndex {
-                        playerManager.seekToFrame(frameIndex)
-                        lastSeekFrame = frameIndex
+                        // Cancel previous debounce task
+                        seekDebounceTask?.cancel()
+                        
+                        // Create new debounced seek task
+                        seekDebounceTask = Task {
+                            // 50ms debounce - imperceptible but prevents race conditions
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            
+                            // Check if task wasn't cancelled
+                            guard !Task.isCancelled else { return }
+                            
+                            // Perform the seek
+                            await MainActor.run {
+                                playerManager.seekToFrame(frameIndex)
+                                lastSeekFrame = frameIndex
+                            }
+                        }
                     }
                 }
             }
@@ -80,10 +107,39 @@ struct FramePickerCarousel: View {
             .onChange(of: playerManager.currentFrameIndex) { oldValue, newValue in
                 // Only update scroll position when NOT actively scrolling
                 // (e.g., from the main scrubber or play controls)
-                if !isUserScrolling && scrollPosition != newValue {
+                
+                // Don't update if already at correct position
+                guard scrollPosition != newValue else { return }
+                
+                // Don't update while user is scrolling
+                guard !isUserScrolling else { return }
+                
+                // Don't update while ThumbnailScrubber is being used
+                guard !isScrubbing else { return }
+                
+                // Don't update if scroll phase is not idle (prevents conflicts during animations)
+                guard scrollPhase == .idle else { return }
+                
+                // Debounce: wait 200ms after last user interaction before accepting external updates
+                // This prevents snap-back when the user just finished scrolling
+                if let lastInteraction = lastUserInteractionTime {
+                    let timeSinceInteraction = Date().timeIntervalSince(lastInteraction)
+                    guard timeSinceInteraction > 0.2 else { return }
+                }
+                
+                // Only update if frame difference is significant (prevents jitter from minor variations)
+                let frameDifference = abs(newValue - (scrollPosition ?? 0))
+                guard frameDifference >= 1 else { return }
+                
+                // Animate the scroll for smooth centering
+                withAnimation(.easeInOut(duration: 0.3)) {
                     scrollPosition = newValue
                     lastSeekFrame = newValue
                 }
+            }
+            .onDisappear {
+                // Cancel pending seek task to prevent memory leaks
+                seekDebounceTask?.cancel()
             }
         }
         .frame(height: frameHeight + 20)
@@ -143,7 +199,7 @@ struct FrameThumbnailView: View {
 #Preview {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
-            FramePickerCarousel(playerManager: VideoPlayerManager(url: url))
+            FramePickerCarousel(playerManager: VideoPlayerManager(url: url), isCarouselScrolling: .constant(false), isScrubbing: .constant(false))
                 .padding()
                 .background(Color.black)
         } else {

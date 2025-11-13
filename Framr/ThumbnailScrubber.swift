@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ThumbnailScrubber: View {
     @Bindable var playerManager: VideoPlayerManager
+    @Binding var isScrubbing: Bool
     
     var body: some View {
         VStack(spacing: 8) {
@@ -38,7 +39,7 @@ struct ThumbnailScrubber: View {
                     .cornerRadius(10)
 
                     // Seek indicator - draggable
-                    Rectangle()
+                    Capsule()
                         .fill(Color.white)
                         .frame(width: 4)
                         .glassEffect(.regular.tint(.white))
@@ -46,18 +47,22 @@ struct ThumbnailScrubber: View {
                             x: geometry.size.width
                                 * playerManager.getCurrentProgress() - 2
                         )
-                        .shadow(color: .white.opacity(0.5), radius: 4)
+                        .shadow(color: .white.opacity(0.5), radius: 2)
                 }
                 .frame(height: 40)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
+                            isScrubbing = true
                             let percentage = max(
                                 0,
                                 min(1, value.location.x / geometry.size.width)
                             )
                             playerManager.seekToPercentage(percentage)
+                        }
+                        .onEnded { _ in
+                            isScrubbing = false
                         }
                 )
             }
@@ -72,7 +77,7 @@ struct ThumbnailScrubber: View {
 #Preview {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
-            ThumbnailScrubber(playerManager: VideoPlayerManager(url: url))
+            ThumbnailScrubber(playerManager: VideoPlayerManager(url: url), isScrubbing: .constant(false))
                 .padding()
                 .background(Color.black)
         } else {
