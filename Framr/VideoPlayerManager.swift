@@ -39,7 +39,9 @@ class VideoPlayerManager {
     
     private func setupPlayer() {
         // Add periodic time observer
-        let interval = CMTime(seconds: 0.01, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        // Using 1/30 second interval (30 fps) instead of 0.01s (100 fps)
+        // This reduces unnecessary updates while still providing smooth UI
+        let interval = CMTime(seconds: 1.0/30.0, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             self?.currentTime = time
             self?.updateCurrentFrameIndex()
@@ -161,8 +163,10 @@ class VideoPlayerManager {
     }
     
     func seek(to time: CMTime) {
+        // Don't manually set currentTime - let the periodic observer update it
+        // This prevents race conditions where we set the target time but the observer
+        // immediately overwrites it with the actual (not-yet-seeked) player time
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
-        currentTime = time
     }
     
     func seekToPercentage(_ percentage: Double) {

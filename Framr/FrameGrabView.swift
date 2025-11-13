@@ -58,14 +58,16 @@ struct FrameGrabView: View {
                 FramePickerCarousel(playerManager: playerManager, isCarouselScrolling: $isCarouselScrolling, isScrubbing: $isScrubbing)
                     .padding(.horizontal)
                     .padding(.bottom, 20)
-                    .opacity(isZooming || isScrubbing ? 0 : 1)
+                    .opacity(isZooming || isScrubbing || playerManager.isPlaying ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
                     .animation(.easeInOut(duration: 0.3), value: isScrubbing)
+                    .animation(.easeInOut(duration: 0.3), value: playerManager.isPlaying)
+                
+                Spacer()
 
                 // Bottom Controls
                 FrameControlButtons(
                     playerManager: playerManager,
-                    isSaving: isSaving,
                     onSaveFrame: {
                         Task {
                             await saveCurrentFrame()

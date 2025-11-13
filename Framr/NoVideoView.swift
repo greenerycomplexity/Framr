@@ -10,6 +10,8 @@ import PhotosUI
 
 struct NoVideoView: View {
     @Binding var selectedVideo: PhotosPickerItem?
+    @State private var galleryTapped = false
+    
     var body: some View {
         VStack {
             VStack(alignment: .leading) {
@@ -38,6 +40,12 @@ struct NoVideoView: View {
                     .glassEffect(.regular.interactive().tint(.blue))
                     .padding(.top, 20)
                 }
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        galleryTapped.toggle()
+                    }
+                )
+                .sensoryFeedback(.impact, trigger: galleryTapped)
             }
         }
     }
