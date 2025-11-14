@@ -25,7 +25,7 @@ struct FramePickerCarousel: View {
 
     private let frameHeight: CGFloat = 60
     private let frameWidth: CGFloat = 40
-    private let frameSpacing: CGFloat = 8
+    private let frameSpacing: CGFloat = 4
     private let hapticGenerator = UIImpactFeedbackGenerator(style: .soft)
 
     var body: some View {
@@ -115,7 +115,7 @@ struct FramePickerCarousel: View {
                             // Create new debounced seek task
                             seekDebounceTask = Task {
                                 // 50ms debounce - imperceptible but prevents race conditions
-                                try? await Task.sleep(nanoseconds: 50_000_000)
+                                try? await Task.sleep(nanoseconds: 30_000_000)
 
                                 // Check if task wasn't cancelled
                                 guard !Task.isCancelled else { return }
@@ -214,6 +214,12 @@ struct FramePickerCarousel: View {
                     let frameDifference = abs(newValue - centerFrameIndex)
                     guard frameDifference >= 3 else { return }
 
+                    // If frame jumped significantly (from scrubber), preload thumbnails in that area
+                    // This makes the carousel feel instant when seeking to distant parts of the video
+                    if frameDifference >= 10 {
+                        playerManager.preloadThumbnailsAround(frameIndex: newValue, range: 25)
+                    }
+
                     // Animate the scroll to center the frame
                     withAnimation(.easeInOut(duration: 0.3)) {
                         proxy.scrollTo(newValue, anchor: .center)
@@ -226,11 +232,14 @@ struct FramePickerCarousel: View {
                     if oldValue == true && newValue == false {
                         let currentFrame = playerManager.currentFrameIndex
 
+                        // Preload thumbnails around where we landed
+                        playerManager.preloadThumbnailsAround(frameIndex: currentFrame, range: 10)
+
                         // Only update if we're not already at the right position
                         if centerFrameIndex != currentFrame {
                             // Use a small delay to let the scrubber's final seek settle
                             Task {
-                                try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
+//                                try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms
                                 await MainActor.run {
                                     withAnimation(.easeInOut(duration: 0.3)) {
                                         proxy.scrollTo(
@@ -300,15 +309,16 @@ struct FrameThumbnailView: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(width: width, height: height)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 10))
+                    .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8))
             } else {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 6)
                     .fill(Color.gray.opacity(0.3))
                     .frame(width: width, height: height)
                     .overlay(
                         ProgressView()
                             .tint(.white)
                     )
+                    .glassEffect(.clear, in: RoundedRectangle(cornerRadius: 8))
             }
         }
         .onAppear {
