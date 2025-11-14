@@ -25,6 +25,11 @@ class VideoPlayerManager {
     private var timeObserver: Any?
     private var asset: AVAsset?
     
+    // Thumbnail generation optimization
+    private let thumbnailQueue = DispatchQueue(label: "com.framr.thumbnailQueue", qos: .userInitiated)
+    private var activeThumbnailTasks: [Int: Task<UIImage?, Never>] = [:]
+    private var thumbnailGenerator: AVAssetImageGenerator?
+    
     init(url: URL) {
         let playerItem = AVPlayerItem(url: url)
         self.player = AVPlayer(playerItem: playerItem)
@@ -64,9 +69,27 @@ class VideoPlayerManager {
             let duration = try await asset.load(.duration)
             self.duration = duration
             await calculateTotalFrameCount()
+            setupThumbnailGenerator()
         } catch {
             print("Error loading duration: \(error)")
         }
+    }
+    
+    private func setupThumbnailGenerator() {
+        guard let asset = asset else { return }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        
+        // Generate at higher resolution for Retina displays
+        let scale = UIScreen.main.scale
+        generator.maximumSize = CGSize(
+            width: 120 * scale,
+            height: 80 * scale
+        )
+        
+        self.thumbnailGenerator = generator
     }
     
     private func calculateTotalFrameCount() async {
@@ -252,53 +275,68 @@ class VideoPlayerManager {
             return cachedImage
         }
         
-        // Generate thumbnail for this specific frame
-        guard let asset = asset, let frameRate = getFrameRate() else { return nil }
+        // Check if already generating this thumbnail
+        if let existingTask = activeThumbnailTasks[frameIndex] {
+            return await existingTask.value
+        }
         
-        let timeInSeconds = Double(frameIndex) / frameRate
-        let time = CMTime(seconds: timeInSeconds, preferredTimescale: 600)
-        
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.requestedTimeToleranceBefore = .zero
-        imageGenerator.requestedTimeToleranceAfter = .zero
-        
-        // Generate at higher resolution for Retina displays
-        // Using 3x scale to ensure sharp thumbnails on all devices
-        let scale = UIScreen.main.scale
-        imageGenerator.maximumSize = CGSize(
-            width: 120 * scale,
-            height: 80 * scale
-        )
-        
-        do {
-            let cgImage = try await imageGenerator.image(at: time).image
-            let uiImage = UIImage(cgImage: cgImage)
+        // Create new task for this thumbnail
+        let task = Task<UIImage?, Never> { @MainActor in
+            guard let generator = self.thumbnailGenerator,
+                  let frameRate = self.getFrameRate() else { return nil }
             
-            // Cache the thumbnail
-            await MainActor.run {
-                frameThumbnailCache[frameIndex] = uiImage
-                
-                // Limit cache size to prevent memory issues
-                if frameThumbnailCache.count > 100 {
-                    // Remove random entries to keep cache size manageable
-                    let keysToRemove = Array(frameThumbnailCache.keys.prefix(20))
-                    for key in keysToRemove {
-                        frameThumbnailCache.removeValue(forKey: key)
+            let timeInSeconds = Double(frameIndex) / frameRate
+            let time = CMTime(seconds: timeInSeconds, preferredTimescale: 600)
+            
+            do {
+                // Use serial queue to prevent concurrent generation
+                // This ensures only one thumbnail is being decoded at a time
+                let image: UIImage = try await withCheckedThrowingContinuation { continuation in
+                    self.thumbnailQueue.async {
+                        do {
+                            let cgImage = try generator.copyCGImage(at: time, actualTime: nil)
+                            let uiImage = UIImage(cgImage: cgImage)
+                            continuation.resume(returning: uiImage)
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
+                
+                // Cache the thumbnail and cleanup
+                self.frameThumbnailCache[frameIndex] = image
+                self.activeThumbnailTasks.removeValue(forKey: frameIndex)
+                
+                // LRU-style cache eviction - keep most recent frames
+                if self.frameThumbnailCache.count > 150 {
+                    // Sort keys and remove oldest 50 entries
+                    let sortedKeys = self.frameThumbnailCache.keys.sorted()
+                    let keysToRemove = sortedKeys.prefix(50)
+                    keysToRemove.forEach { self.frameThumbnailCache.removeValue(forKey: $0) }
+                }
+                
+                return image
+            } catch {
+                self.activeThumbnailTasks.removeValue(forKey: frameIndex)
+                print("Error generating frame thumbnail at index \(frameIndex): \(error)")
+                return nil
             }
-            
-            return uiImage
-        } catch {
-            print("Error generating frame thumbnail: \(error)")
-            return nil
         }
+        
+        // Store the task to prevent duplicate generation
+        activeThumbnailTasks[frameIndex] = task
+        return await task.value
     }
     
     deinit {
         // Pause the player before cleanup
         player.pause()
+        
+        // Cancel all active thumbnail tasks
+        for (_, task) in activeThumbnailTasks {
+            task.cancel()
+        }
+        activeThumbnailTasks.removeAll()
         
         // Remove time observer
         if let timeObserver = timeObserver {

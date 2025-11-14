@@ -290,6 +290,7 @@ struct FrameThumbnailView: View {
 
     @State private var thumbnail: UIImage?
     @State private var isLoading = false
+    @State private var loadTask: Task<Void, Never>?
 
     var body: some View {
         Group {
@@ -313,18 +314,35 @@ struct FrameThumbnailView: View {
         .onAppear {
             loadThumbnail()
         }
+        .onDisappear {
+            // Cancel the loading task when the view disappears
+            loadTask?.cancel()
+            loadTask = nil
+        }
     }
 
     private func loadThumbnail() {
         guard thumbnail == nil, !isLoading else { return }
 
         isLoading = true
-        Task {
+        loadTask = Task {
             if let cachedThumbnail = await playerManager.getFrameThumbnail(
                 at: frameIndex
             ) {
+                // Check if task was cancelled before updating UI
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        isLoading = false
+                    }
+                    return
+                }
+                
                 await MainActor.run {
                     thumbnail = cachedThumbnail
+                    isLoading = false
+                }
+            } else {
+                await MainActor.run {
                     isLoading = false
                 }
             }
