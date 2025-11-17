@@ -58,8 +58,15 @@ class VideoPlayerManager {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
-            self?.isPlaying = false
-            self?.player.seek(to: .zero)
+            guard let self = self else { return }
+            self.isPlaying = false
+            
+            // Seek to the last frame instead of looping back to start
+            if let frameRate = self.getFrameRate() {
+                let frameDuration = CMTime(seconds: 1.0 / frameRate, preferredTimescale: 600)
+                let lastFrameTime = CMTimeSubtract(self.duration, frameDuration)
+                self.player.seek(to: lastFrameTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            }
         }
     }
     
