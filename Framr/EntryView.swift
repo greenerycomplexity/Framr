@@ -12,19 +12,30 @@ import AVFoundation
 struct EntryView: View {
     @State private var selectedVideo: PhotosPickerItem? = nil
     @State private var videoURL: URL? = nil
-    @State private var isLoadingVideo = false
+    @State private var proxyURL: URL? = nil
+    @State private var isProcessing = false
+    @State private var processingProgress: Double = 0.0
+    @State private var processingMessage: String = ""
     
     var body: some View {
         ZStack {
-            if let videoURL = videoURL {
-                FrameGrabView(videoURL: videoURL, selectedVideo: $selectedVideo)
-                    .id(videoURL)
+            if let videoURL = videoURL, !isProcessing {
+                FrameGrabView(
+                    originalURL: videoURL,
+                    proxyURL: proxyURL,
+                    selectedVideo: $selectedVideo
+                )
+                .id(videoURL)
             }
-            else if isLoadingVideo {
+            else if isProcessing {
                 VStack(spacing: 20) {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                    Text("Loading video...")
+                    ProgressView(value: processingProgress)
+                        .frame(width: 200)
+                        .tint(.orange)
+                    Text(processingMessage)
+                        .font(.headline)
+                    Text("\(Int(processingProgress * 100))%")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -43,24 +54,69 @@ struct EntryView: View {
     private func loadVideo(from item: PhotosPickerItem?) async {
         guard let item = item else {
             videoURL = nil
+            proxyURL = nil
             return
         }
         
         // Clear the current video to show loading state
         videoURL = nil
-        isLoadingVideo = true
+        proxyURL = nil
+        isProcessing = true
+        processingProgress = 0.0
+        processingMessage = "Loading video..."
         
         do {
+            // Step 1: Load video file (0-10% progress)
             guard let movie = try await item.loadTransferable(type: VideoFile.self) else {
-                isLoadingVideo = false
+                isProcessing = false
                 return
             }
             videoURL = movie.url
+            
+            await MainActor.run {
+                processingProgress = 0.1
+            }
+            
+            // Step 2: Always generate 1080p proxy for all videos
+            // Check if proxy already exists
+            if ProxyManager.proxyExists(for: movie.url) {
+                // Use existing proxy
+                proxyURL = ProxyManager.getProxyURL(for: movie.url)
+                print("Using existing proxy")
+                
+                await MainActor.run {
+                    processingProgress = 1.0
+                }
+            } else {
+                // Generate new proxy (10-100% progress)
+                processingMessage = "Optimizing video for playback..."
+                
+                do {
+                    let proxy = try await ProxyManager.generateProxy(
+                        from: movie.url,
+                        progress: { progress in
+                            Task { @MainActor in
+                                // Map proxy generation progress to 10-100%
+                                self.processingProgress = 0.1 + (progress * 0.9)
+                            }
+                        }
+                    )
+                    proxyURL = proxy
+                    print("Proxy generation complete")
+                } catch {
+                    print("Error generating proxy: \(error)")
+                    // Continue without proxy - will use original
+                    proxyURL = nil
+                }
+            }
+            
+            isProcessing = false
+            processingProgress = 0.0
+            processingMessage = ""
         } catch {
             print("Error loading video: \(error)")
+            isProcessing = false
         }
-        
-        isLoadingVideo = false
     }
 }
 

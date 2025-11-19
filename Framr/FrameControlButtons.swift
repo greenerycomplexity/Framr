@@ -80,7 +80,7 @@ struct FrameControlButtons: View {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
             FrameControlButtons(
-                playerManager: VideoPlayerManager(url: url),
+                playerManager: VideoPlayerManager(originalURL: url, proxyURL: nil),
                 onSaveFrame: {
                     print("Save frame tapped")
                 }

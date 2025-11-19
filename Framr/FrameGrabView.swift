@@ -18,7 +18,8 @@ enum BannerState {
 }
 
 struct FrameGrabView: View {
-    let videoURL: URL
+    let originalURL: URL
+    let proxyURL: URL?
     @Binding var selectedVideo: PhotosPickerItem?
     @State private var playerManager: VideoPlayerManager
     @State private var bannerState: BannerState = .hidden
@@ -29,11 +30,12 @@ struct FrameGrabView: View {
     @State private var isScrubbing = false
     @State private var isCarouselScrolling = false
 
-    init(videoURL: URL, selectedVideo: Binding<PhotosPickerItem?>) {
-        self.videoURL = videoURL
+    init(originalURL: URL, proxyURL: URL?, selectedVideo: Binding<PhotosPickerItem?>) {
+        self.originalURL = originalURL
+        self.proxyURL = proxyURL
         self._selectedVideo = selectedVideo
         self._playerManager = State(
-            initialValue: VideoPlayerManager(url: videoURL)
+            initialValue: VideoPlayerManager(originalURL: originalURL, proxyURL: proxyURL)
         )
     }
 
@@ -217,7 +219,7 @@ struct FrameGrabView: View {
 #Preview {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
-            FrameGrabView(videoURL: url, selectedVideo: .constant(nil))
+            FrameGrabView(originalURL: url, proxyURL: nil, selectedVideo: .constant(nil))
         } else {
             ContentUnavailableView(
                 "No Preview Video",

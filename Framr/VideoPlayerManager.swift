@@ -23,17 +23,39 @@ class VideoPlayerManager {
     private var frameThumbnailCache: [Int: UIImage] = [:]
     
     private var timeObserver: Any?
-    private var asset: AVAsset?
+    
+    // Dual-asset architecture
+    private var originalAsset: AVAsset      // For high-quality frame extraction
+    private var proxyAsset: AVAsset         // For playback (may be same as original)
+    private var originalURL: URL            // Store original URL
+    private var isUsingProxy: Bool = false  // Track if proxy is active
     
     // Thumbnail generation optimization
     private let thumbnailQueue = DispatchQueue(label: "com.framr.thumbnailQueue", qos: .userInitiated)
     private var activeThumbnailTasks: [Int: Task<UIImage?, Never>] = [:]
     private var thumbnailGenerator: AVAssetImageGenerator?
     
-    init(url: URL) {
-        let playerItem = AVPlayerItem(url: url)
+    init(originalURL: URL, proxyURL: URL? = nil) {
+        self.originalURL = originalURL
+        let original = AVURLAsset(url: originalURL)
+        self.originalAsset = original
+        
+        // Use proxy if provided, otherwise use original
+        let proxy: AVAsset
+        if let proxyURL = proxyURL {
+            proxy = AVURLAsset(url: proxyURL)
+            self.isUsingProxy = true
+            print("VideoPlayerManager: Using proxy for playback")
+        } else {
+            proxy = original
+            self.isUsingProxy = false
+            print("VideoPlayerManager: Using original for playback")
+        }
+        self.proxyAsset = proxy
+        
+        // Player uses proxy asset for performance
+        let playerItem = AVPlayerItem(asset: proxy)
         self.player = AVPlayer(playerItem: playerItem)
-        self.asset = AVURLAsset(url: url)
         
         setupPlayer()
         Task {
@@ -71,9 +93,8 @@ class VideoPlayerManager {
     }
     
     private func loadDuration() async {
-        guard let asset = asset else { return }
         do {
-            let duration = try await asset.load(.duration)
+            let duration = try await proxyAsset.load(.duration)
             self.duration = duration
             await calculateTotalFrameCount()
             setupThumbnailGenerator()
@@ -83,8 +104,8 @@ class VideoPlayerManager {
     }
     
     private func setupThumbnailGenerator() {
-        guard let asset = asset else { return }
-        let generator = AVAssetImageGenerator(asset: asset)
+        // Use proxy asset for faster thumbnail generation
+        let generator = AVAssetImageGenerator(asset: proxyAsset)
         generator.appliesPreferredTrackTransform = true
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
@@ -113,9 +134,8 @@ class VideoPlayerManager {
     }
     
     func generateThumbnails() async {
-        guard let asset = asset else { return }
-        
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        // Use proxy asset for faster thumbnail generation
+        let imageGenerator = AVAssetImageGenerator(asset: proxyAsset)
         imageGenerator.appliesPreferredTrackTransform = true
         
         // Generate at higher resolution for Retina displays
@@ -126,7 +146,7 @@ class VideoPlayerManager {
         ) // 16:9 aspect ratio thumbnail
         
         do {
-            let duration = try await asset.load(.duration)
+            let duration = try await proxyAsset.load(.duration)
             let durationSeconds = CMTimeGetSeconds(duration)
             
             // Adaptive thumbnail count based on video duration
@@ -249,12 +269,12 @@ class VideoPlayerManager {
     }
     
     func captureCurrentFrame() async -> UIImage? {
-        guard let asset = asset else { return nil }
-        
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        // CRITICAL: Use original asset for full quality export, not proxy
+        let imageGenerator = AVAssetImageGenerator(asset: originalAsset)
         imageGenerator.appliesPreferredTrackTransform = true
         imageGenerator.requestedTimeToleranceBefore = .zero
         imageGenerator.requestedTimeToleranceAfter = .zero
+        // No maximumSize constraint = full resolution export
         
         do {
             let cgImage = try await imageGenerator.image(at: currentTime).image

@@ -96,7 +96,7 @@ struct VideoPlayerSection: View {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
             VideoPlayerSection(
-                playerManager: VideoPlayerManager(url: url),
+                playerManager: VideoPlayerManager(originalURL: url, proxyURL: nil),
                 isZooming: .constant(false)
             )
             .background(Color.black)

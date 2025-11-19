@@ -77,7 +77,7 @@ struct ThumbnailScrubber: View {
 #Preview {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
-            ThumbnailScrubber(playerManager: VideoPlayerManager(url: url), isScrubbing: .constant(false))
+            ThumbnailScrubber(playerManager: VideoPlayerManager(originalURL: url, proxyURL: nil), isScrubbing: .constant(false))
                 .padding()
                 .background(Color.black)
         } else {

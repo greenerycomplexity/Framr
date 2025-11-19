@@ -364,7 +364,7 @@ struct FrameThumbnailView: View {
     #if DEBUG
         if let url = PreviewHelpers.sampleVideoURL {
             FramePickerCarousel(
-                playerManager: VideoPlayerManager(url: url),
+                playerManager: VideoPlayerManager(originalURL: url, proxyURL: nil),
                 isCarouselScrolling: .constant(false),
                 isScrubbing: .constant(false)
             )
