@@ -1,7 +1,7 @@
 # Framr
 
 <p align="center">
-  <img src="Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="Framr Logo" width="120" height="120">
+  <img src="Framr/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="Framr Logo" width="120" height="120">
 </p>
 
 ## What is it?
