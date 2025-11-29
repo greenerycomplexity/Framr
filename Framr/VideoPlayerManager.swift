@@ -8,6 +8,8 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import CoreLocation
+import ImageIO
 
 @Observable
 class VideoPlayerManager {
@@ -34,6 +36,10 @@ class VideoPlayerManager {
     private let thumbnailQueue = DispatchQueue(label: "com.framr.thumbnailQueue", qos: .userInitiated)
     private var activeThumbnailTasks: [Int: Task<UIImage?, Never>] = [:]
     private var thumbnailGenerator: AVAssetImageGenerator?
+    
+    // Cached video metadata (extracted once on load)
+    private var cachedVideoMetadata: [String: Any]?
+    private var cachedImageMetadata: [String: Any]?
     
     init(originalURL: URL, proxyURL: URL? = nil) {
         self.originalURL = originalURL
@@ -98,6 +104,9 @@ class VideoPlayerManager {
             self.duration = duration
             await calculateTotalFrameCount()
             setupThumbnailGenerator()
+            
+            // Pre-extract and cache metadata (runs in background, doesn't block)
+            await extractAndCacheMetadata()
         } catch {
             print("Error loading duration: \(error)")
         }
@@ -283,6 +292,388 @@ class VideoPlayerManager {
             print("Error capturing frame: \(error)")
             return nil
         }
+    }
+    
+    // MARK: - Metadata Extraction (Streamlined)
+    
+    /// Target metadata fields we want to extract
+    /// Note: Lens-specific fields (lensModel, fNumber, iso, etc.) are rarely present in iPhone videos
+    /// as these values change per-frame during recording. They're only reliably available in photos.
+    private static let targetFields: Set<String> = [
+        "make", "model", "software", "creationDate", "location",
+        "lensModel", "focalLength", "focalLength35mm", "fNumber", "iso", "exposureTime"
+    ]
+    
+    /// Extract and cache metadata once when video loads
+    private func extractAndCacheMetadata() async {
+        let metadata = await extractVideoMetadataOnce()
+        cachedVideoMetadata = metadata
+        cachedImageMetadata = buildImageMetadata(from: metadata)
+    }
+    
+    /// Get cached video metadata (instant, no async needed after initial load)
+    func getVideoMetadata() -> [String: Any] {
+        return cachedVideoMetadata ?? [:]
+    }
+    
+    /// Get cached image metadata ready for EXIF embedding (instant access)
+    func getImageMetadata() -> [String: Any] {
+        return cachedImageMetadata ?? [:]
+    }
+    
+    /// Single-pass metadata extraction with early exit
+    private func extractVideoMetadataOnce() async -> [String: Any] {
+        var metadata: [String: Any] = [:]
+        var foundFields = Set<String>()
+        
+        // Helper to check if we've found all fields
+        func allFieldsFound() -> Bool {
+            foundFields.count >= Self.targetFields.count
+        }
+        
+        do {
+            // Load common metadata and creation date in one call
+            let (commonMetadata, creationDate) = try await originalAsset.load(.commonMetadata, .creationDate)
+            
+            // Add creation date
+            if let creationDate = creationDate {
+                metadata["creationDate"] = creationDate
+                foundFields.insert("creationDate")
+            }
+            
+            // Process common metadata (make, model, software)
+            for item in commonMetadata {
+                if allFieldsFound() { break }
+                
+                if let commonKey = item.commonKey {
+                    switch commonKey {
+                    case .commonKeyMake:
+                        if let make = try? await item.load(.stringValue), metadata["make"] == nil {
+                            metadata["make"] = make
+                            foundFields.insert("make")
+                        }
+                    case .commonKeyModel:
+                        if let model = try? await item.load(.stringValue), metadata["model"] == nil {
+                            metadata["model"] = model
+                            foundFields.insert("model")
+                        }
+                    case .commonKeySoftware:
+                        if let software = try? await item.load(.stringValue), metadata["software"] == nil {
+                            metadata["software"] = software
+                            foundFields.insert("software")
+                        }
+                    default:
+                        break
+                    }
+                }
+            }
+            
+            // Single pass through all metadata for remaining fields
+            let allMetadata = try await originalAsset.load(.metadata)
+            
+            for item in allMetadata {
+                if allFieldsFound() { break }
+                
+                // Check by identifier first (faster)
+                if let identifier = item.identifier {
+                    switch identifier {
+                    case .quickTimeMetadataLocationISO6709:
+                        if metadata["location"] == nil,
+                           let locationString = try? await item.load(.stringValue),
+                           let location = parseISO6709Location(locationString) {
+                            metadata["location"] = location
+                            foundFields.insert("location")
+                        }
+                    case .quickTimeMetadataMake, .commonIdentifierMake:
+                        if metadata["make"] == nil,
+                           let make = try? await item.load(.stringValue) {
+                            metadata["make"] = make
+                            foundFields.insert("make")
+                        }
+                    case .quickTimeMetadataModel, .commonIdentifierModel:
+                        if metadata["model"] == nil,
+                           let model = try? await item.load(.stringValue) {
+                            metadata["model"] = model
+                            foundFields.insert("model")
+                        }
+                    case .quickTimeMetadataSoftware, .commonIdentifierSoftware:
+                        if metadata["software"] == nil,
+                           let software = try? await item.load(.stringValue) {
+                            metadata["software"] = software
+                            foundFields.insert("software")
+                        }
+                    default:
+                        break
+                    }
+                }
+                
+                // Check by key for lens/camera-specific metadata
+                if let key = getKeyString(from: item) {
+                    let keyLower = key.lowercased()
+                    
+                    // Lens model
+                    if metadata["lensModel"] == nil &&
+                       (keyLower.contains("lens") && keyLower.contains("model") ||
+                        key == "com.apple.quicktime.camera.lens_model") {
+                        if let value = try? await item.load(.stringValue) {
+                            metadata["lensModel"] = value
+                            foundFields.insert("lensModel")
+                        }
+                    }
+                    
+                    // Focal length 35mm
+                    if metadata["focalLength35mm"] == nil &&
+                       (keyLower.contains("focal") && keyLower.contains("35mm") ||
+                        key == "com.apple.quicktime.camera.focal_length.35mm_equivalent") {
+                        if let value = try? await item.load(.numberValue) {
+                            metadata["focalLength35mm"] = value
+                            foundFields.insert("focalLength35mm")
+                        }
+                    }
+                    
+                    // Focal length actual
+                    if metadata["focalLength"] == nil &&
+                       keyLower.contains("focallength") && !keyLower.contains("35mm") {
+                        if let value = try? await item.load(.numberValue) {
+                            metadata["focalLength"] = value
+                            foundFields.insert("focalLength")
+                        }
+                    }
+                    
+                    // F-number / aperture
+                    if metadata["fNumber"] == nil &&
+                       (keyLower.contains("fnumber") || keyLower.contains("aperture")) {
+                        if let value = try? await item.load(.numberValue) {
+                            metadata["fNumber"] = value
+                            foundFields.insert("fNumber")
+                        }
+                    }
+                    
+                    // ISO
+                    if metadata["iso"] == nil &&
+                       keyLower.contains("iso") && !keyLower.contains("isod") {
+                        if let value = try? await item.load(.numberValue) {
+                            metadata["iso"] = value
+                            foundFields.insert("iso")
+                        }
+                    }
+                    
+                    // Exposure time
+                    if metadata["exposureTime"] == nil &&
+                       (keyLower.contains("exposure") || keyLower.contains("shutter")) {
+                        if let value = try? await item.load(.numberValue) {
+                            metadata["exposureTime"] = value
+                            foundFields.insert("exposureTime")
+                        }
+                    }
+                }
+            }
+            
+            // If we still haven't found lens info, check format-specific metadata
+            // Lens data is often in QuickTime MDTA format specifically
+            if metadata["lensModel"] == nil {
+                let metadataFormats = try await originalAsset.load(.availableMetadataFormats)
+                
+                for format in metadataFormats {
+                    if allFieldsFound() { break }
+                    
+                    let formatMetadata = try await originalAsset.loadMetadata(for: format)
+                    for item in formatMetadata {
+                        if let key = getKeyString(from: item) {
+                            let keyLower = key.lowercased()
+                            
+                            // Lens model
+                            if metadata["lensModel"] == nil &&
+                               (keyLower.contains("lens") && keyLower.contains("model") ||
+                                key == "com.apple.quicktime.camera.lens_model") {
+                                if let value = try? await item.load(.stringValue) {
+                                    metadata["lensModel"] = value
+                                    foundFields.insert("lensModel")
+                                }
+                            }
+                            
+                            // Focal length 35mm
+                            if metadata["focalLength35mm"] == nil &&
+                               (keyLower.contains("focal") && keyLower.contains("35mm") ||
+                                key == "com.apple.quicktime.camera.focal_length.35mm_equivalent") {
+                                if let value = try? await item.load(.numberValue) {
+                                    metadata["focalLength35mm"] = value
+                                    foundFields.insert("focalLength35mm")
+                                }
+                            }
+                            
+                            // F-number / aperture
+                            if metadata["fNumber"] == nil &&
+                               (keyLower.contains("fnumber") || keyLower.contains("aperture")) {
+                                if let value = try? await item.load(.numberValue) {
+                                    metadata["fNumber"] = value
+                                    foundFields.insert("fNumber")
+                                }
+                            }
+                            
+                            // ISO
+                            if metadata["iso"] == nil &&
+                               keyLower.contains("iso") && !keyLower.contains("isod") {
+                                if let value = try? await item.load(.numberValue) {
+                                    metadata["iso"] = value
+                                    foundFields.insert("iso")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+        } catch {
+            print("Error extracting metadata: \(error)")
+        }
+        
+        return metadata
+    }
+    
+    /// Convert metadata item key to string
+    private func getKeyString(from item: AVMetadataItem) -> String? {
+        if let key = item.key as? String {
+            return key
+        } else if let keyData = item.key as? Data {
+            return String(data: keyData, encoding: .utf8)
+        } else if let keyNumber = item.key as? NSNumber {
+            // FourCC integer to string
+            let fourCC = keyNumber.uint32Value
+            let chars = [
+                Character(UnicodeScalar((fourCC >> 24) & 0xFF)!),
+                Character(UnicodeScalar((fourCC >> 16) & 0xFF)!),
+                Character(UnicodeScalar((fourCC >> 8) & 0xFF)!),
+                Character(UnicodeScalar(fourCC & 0xFF)!)
+            ]
+            return String(chars)
+        }
+        return nil
+    }
+    
+    /// Parse ISO 6709 location string format (e.g., "+34.0522-118.2437+025.000/")
+    private func parseISO6709Location(_ locationString: String) -> CLLocation? {
+        // ISO 6709 format: ±DD.DDDD±DDD.DDDD±AAA.AAA/
+        // Latitude (±DD.DDDD) + Longitude (±DDD.DDDD) + optional Altitude (±AAA.AAA) + terminator (/)
+        
+        let pattern = "([+-]\\d+\\.?\\d*)([+-]\\d+\\.?\\d*)([+-]\\d+\\.?\\d*)?"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: locationString, range: NSRange(locationString.startIndex..., in: locationString)) else {
+            return nil
+        }
+        
+        guard let latRange = Range(match.range(at: 1), in: locationString),
+              let lonRange = Range(match.range(at: 2), in: locationString),
+              let latitude = Double(locationString[latRange]),
+              let longitude = Double(locationString[lonRange]) else {
+            return nil
+        }
+        
+        var altitude: Double = 0
+        if match.range(at: 3).location != NSNotFound,
+           let altRange = Range(match.range(at: 3), in: locationString),
+           let alt = Double(locationString[altRange]) {
+            altitude = alt
+        }
+        
+        return CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: altitude,
+            horizontalAccuracy: 0,
+            verticalAccuracy: 0,
+            timestamp: Date()
+        )
+    }
+    
+    /// Build EXIF/image metadata dictionary from video metadata
+    func buildImageMetadata(from videoMetadata: [String: Any]) -> [String: Any] {
+        var imageMetadata: [String: Any] = [:]
+        
+        // TIFF metadata
+        var tiffDict: [String: Any] = [:]
+        if let make = videoMetadata["make"] as? String {
+            tiffDict[kCGImagePropertyTIFFMake as String] = make
+        }
+        if let model = videoMetadata["model"] as? String {
+            tiffDict[kCGImagePropertyTIFFModel as String] = model
+        }
+        if let software = videoMetadata["software"] as? String {
+            tiffDict[kCGImagePropertyTIFFSoftware as String] = software
+        }
+        if !tiffDict.isEmpty {
+            imageMetadata[kCGImagePropertyTIFFDictionary as String] = tiffDict
+        }
+        
+        // EXIF metadata
+        var exifDict: [String: Any] = [:]
+        if let creationDate = videoMetadata["creationDate"] as? Date {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+            exifDict[kCGImagePropertyExifDateTimeOriginal as String] = formatter.string(from: creationDate)
+            exifDict[kCGImagePropertyExifDateTimeDigitized as String] = formatter.string(from: creationDate)
+        }
+        
+        // Lens model
+        if let lensModel = videoMetadata["lensModel"] as? String {
+            exifDict[kCGImagePropertyExifLensModel as String] = lensModel
+        }
+        
+        // Lens make (typically same as camera make for iPhones)
+        if let make = videoMetadata["make"] as? String {
+            exifDict[kCGImagePropertyExifLensMake as String] = make
+        }
+        
+        // Focal length in 35mm equivalent
+        if let focalLength35mm = videoMetadata["focalLength35mm"] as? NSNumber {
+            exifDict[kCGImagePropertyExifFocalLenIn35mmFilm as String] = focalLength35mm.intValue
+        }
+        
+        // Focal length (actual)
+        if let focalLength = videoMetadata["focalLength"] as? NSNumber {
+            exifDict[kCGImagePropertyExifFocalLength as String] = focalLength.doubleValue
+        }
+        
+        // F-number (aperture)
+        if let fNumber = videoMetadata["fNumber"] as? NSNumber {
+            exifDict[kCGImagePropertyExifFNumber as String] = fNumber.doubleValue
+        }
+        
+        // ISO speed
+        if let iso = videoMetadata["iso"] as? NSNumber {
+            exifDict[kCGImagePropertyExifISOSpeedRatings as String] = [iso.intValue]
+        }
+        
+        // Exposure time
+        if let exposureTime = videoMetadata["exposureTime"] as? NSNumber {
+            exifDict[kCGImagePropertyExifExposureTime as String] = exposureTime.doubleValue
+        }
+        
+        if !exifDict.isEmpty {
+            imageMetadata[kCGImagePropertyExifDictionary as String] = exifDict
+        }
+        
+        // GPS metadata
+        if let location = videoMetadata["location"] as? CLLocation {
+            var gpsDict: [String: Any] = [:]
+            
+            let latitude = location.coordinate.latitude
+            let longitude = location.coordinate.longitude
+            
+            gpsDict[kCGImagePropertyGPSLatitude as String] = abs(latitude)
+            gpsDict[kCGImagePropertyGPSLatitudeRef as String] = latitude >= 0 ? "N" : "S"
+            gpsDict[kCGImagePropertyGPSLongitude as String] = abs(longitude)
+            gpsDict[kCGImagePropertyGPSLongitudeRef as String] = longitude >= 0 ? "E" : "W"
+            
+            if location.altitude != 0 {
+                gpsDict[kCGImagePropertyGPSAltitude as String] = abs(location.altitude)
+                gpsDict[kCGImagePropertyGPSAltitudeRef as String] = location.altitude >= 0 ? 0 : 1
+            }
+            
+            imageMetadata[kCGImagePropertyGPSDictionary as String] = gpsDict
+        }
+        
+        return imageMetadata
     }
     
     // MARK: - Frame-by-frame Navigation

@@ -9,12 +9,54 @@ import AVKit
 import Photos
 import PhotosUI
 import SwiftUI
+import ImageIO
+import UniformTypeIdentifiers
 
 enum BannerState {
     case hidden
     case success
     case denied
     case error
+}
+
+struct ShareSheetItem: Identifiable {
+    let id = UUID()
+    let data: Data
+    let format: ImageFormat
+    
+    var fileExtension: String {
+        switch format {
+        case .jpeg: return "jpg"
+        case .png: return "png"
+        case .heif: return "heic"
+        }
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let item: ShareSheetItem
+    
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        // Create a temporary file URL for sharing
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("frame_\(UUID().uuidString).\(item.fileExtension)")
+        
+        try? item.data.write(to: tempURL)
+        
+        let controller = UIActivityViewController(
+            activityItems: [tempURL],
+            applicationActivities: nil
+        )
+        
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            // Clean up temp file
+            try? FileManager.default.removeItem(at: tempURL)
+        }
+        
+        return controller
+    }
+    
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
 struct FrameGrabView: View {
@@ -29,6 +71,13 @@ struct FrameGrabView: View {
     @State private var isZooming = false
     @State private var isScrubbing = false
     @State private var isCarouselScrolling = false
+    @State private var showSettings = false
+    @State private var shareSheetItem: ShareSheetItem?
+    
+    // Settings
+    @AppStorage("imageFormat") private var imageFormat: String = ImageFormat.jpeg.rawValue
+    @AppStorage("includeMetadata") private var includeMetadata: Bool = true
+    @AppStorage("sharingAction") private var sharingAction: String = SharingAction.saveToPhotos.rawValue
 
     init(originalURL: URL, proxyURL: URL?, selectedVideo: Binding<PhotosPickerItem?>) {
         self.originalURL = originalURL
@@ -114,7 +163,7 @@ struct FrameGrabView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Settings", systemImage: "gearshape") {
-                        // Settings action
+                        showSettings = true
                     }
                     .opacity(isZooming ? 0 : 1)
                     .animation(.easeInOut(duration: 0.3), value: isZooming)
@@ -130,6 +179,13 @@ struct FrameGrabView: View {
             }
             .toolbarBackground(.visible, for: .navigationBar)
             .preferredColorScheme(.dark)
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
+            .sheet(item: $shareSheetItem) { item in
+                ShareSheet(item: item)
+                    .presentationDetents([.medium, .large])
+            }
         }
     }
 
@@ -170,15 +226,85 @@ struct FrameGrabView: View {
             showBanner(state: .error)
             return
         }
-
-        // Save to photo library
+        
+        // Get cached metadata if enabled (instant - no async needed)
+        let imageMetadata = includeMetadata ? playerManager.getImageMetadata() : [:]
+        
+        // Convert to selected format with metadata
+        let format = ImageFormat(rawValue: imageFormat) ?? .jpeg
+        guard let imageData = createImageData(from: frameImage, format: format, metadata: imageMetadata) else {
+            showBanner(state: .error)
+            return
+        }
+        
+        // Handle sharing action
+        let action = SharingAction(rawValue: sharingAction) ?? .saveToPhotos
+        
+        switch action {
+        case .saveToPhotos:
+            await saveToPhotoLibrary(imageData: imageData, format: format)
+        case .shareSheet:
+            await MainActor.run {
+                shareSheetItem = ShareSheetItem(data: imageData, format: format)
+            }
+        }
+    }
+    
+    private func createImageData(from image: UIImage, format: ImageFormat, metadata: [String: Any]) -> Data? {
+        guard let cgImage = image.cgImage else { return nil }
+        
+        let data = NSMutableData()
+        
+        let uti: CFString
+        switch format {
+        case .jpeg:
+            uti = UTType.jpeg.identifier as CFString
+        case .png:
+            uti = UTType.png.identifier as CFString
+        case .heif:
+            uti = UTType.heic.identifier as CFString
+        }
+        
+        guard let destination = CGImageDestinationCreateWithData(data, uti, 1, nil) else {
+            return nil
+        }
+        
+        var options: [String: Any] = [:]
+        
+        // Merge metadata
+        if !metadata.isEmpty {
+            for (key, value) in metadata {
+                options[key] = value
+            }
+        }
+        
+        // Set quality for JPEG
+        if format == .jpeg {
+            options[kCGImageDestinationLossyCompressionQuality as String] = 0.95
+        }
+        
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
+        
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        
+        return data as Data
+    }
+    
+    private func saveToPhotoLibrary(imageData: Data, format: ImageFormat) async {
         do {
             try await PHPhotoLibrary.shared().performChanges {
-                PHAssetCreationRequest.creationRequestForAsset(from: frameImage)
+                let creationRequest = PHAssetCreationRequest.forAsset()
+                let options = PHAssetResourceCreationOptions()
+                
+                let resourceType: PHAssetResourceType = .photo
+                creationRequest.addResource(with: resourceType, data: imageData, options: options)
             }
-
+            
             showBanner(state: .success)
         } catch {
+            print("Error saving to photo library: \(error)")
             showBanner(state: .error)
         }
     }
