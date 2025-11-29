@@ -99,39 +99,46 @@ class ProxyManager {
         exportSession.outputFileType = .mp4
         exportSession.shouldOptimizeForNetworkUse = true
         
-        // Start export
-        await exportSession.export()
-        
-        // Monitor progress
-        let progressTask = Task {
-            while !Task.isCancelled && exportSession.status == .exporting {
-                await MainActor.run {
-                    progress(Double(exportSession.progress))
+        // Use withCheckedThrowingContinuation to properly track progress during export
+        return try await withCheckedThrowingContinuation { continuation in
+            // Start progress monitoring BEFORE export begins
+            let progressTask = Task {
+                while !Task.isCancelled {
+                    let currentProgress = Double(exportSession.progress)
+                    await MainActor.run {
+                        progress(currentProgress)
+                    }
+                    
+                    // Check if export is no longer in progress
+                    if exportSession.status != .exporting && exportSession.status != .waiting {
+                        break
+                    }
+                    
+                    try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds for smoother updates
                 }
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
             }
-        }
-        
-        // Wait for completion
-        switch exportSession.status {
-        case .completed:
-            progressTask.cancel()
-            progress(1.0)
-            print("Proxy generated successfully at: \(proxyURL.path)")
-            return proxyURL
             
-        case .failed:
-            progressTask.cancel()
-            let errorMessage = exportSession.error?.localizedDescription ?? "Unknown error"
-            throw ProxyError.exportFailed(errorMessage)
-            
-        case .cancelled:
-            progressTask.cancel()
-            throw ProxyError.exportFailed("Export was cancelled")
-            
-        default:
-            progressTask.cancel()
-            throw ProxyError.exportFailed("Export ended with unexpected status: \(exportSession.status.rawValue)")
+            // Start export asynchronously with completion handler
+            exportSession.exportAsynchronously {
+                progressTask.cancel()
+                
+                switch exportSession.status {
+                case .completed:
+                    progress(1.0)
+                    print("Proxy generated successfully at: \(proxyURL.path)")
+                    continuation.resume(returning: proxyURL)
+                    
+                case .failed:
+                    let errorMessage = exportSession.error?.localizedDescription ?? "Unknown error"
+                    continuation.resume(throwing: ProxyError.exportFailed(errorMessage))
+                    
+                case .cancelled:
+                    continuation.resume(throwing: ProxyError.exportFailed("Export was cancelled"))
+                    
+                default:
+                    continuation.resume(throwing: ProxyError.exportFailed("Export ended with unexpected status: \(exportSession.status.rawValue)"))
+                }
+            }
         }
     }
     
